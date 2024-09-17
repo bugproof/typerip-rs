@@ -1,7 +1,10 @@
+use std::env;
 use std::fs::{File, create_dir_all};
 use std::io::{self, Write, BufRead};
 use std::io::Cursor;
 use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
 use ureq;
 use serde_json::Value;
 use woff2_patched::decode::{convert_woff2_to_ttf, is_woff2};
@@ -212,36 +215,32 @@ fn download_and_convert_font(url: &str, dir: &Path, name: &str, auto_install: bo
 }
 
 #[cfg(target_os = "windows")]
+fn get_fontregister_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let current_dir = env::current_dir()?;
+    let fontregister_path = current_dir.join("fontregister.exe");
+
+    if fontregister_path.exists() {
+        Ok(fontregister_path)
+    } else {
+        Err("fontregister.exe not found in the current directory. Download from https://github.com/Nucs/FontRegister/releases/download/2.0/FontRegister.2.0.0-net48-x64.rar".into())
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn install_font_windows(font_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    use winapi::um::shellapi::{ShellExecuteW, SHELLEXECUTEINFOW};
-    use winapi::um::winuser::SW_HIDE;
-    use std::os::windows::ffi::OsStrExt;
-    use std::ffi::OsStr;
+    let fontregister_path = get_fontregister_path()?;
 
-    let path = font_path.to_str().unwrap();
-    let wide: Vec<u16> = OsStr::new(path).encode_wide().chain(Some(0)).collect();
+    let output = Command::new(fontregister_path)
+        .arg("install")
+        .arg(font_path)
+        .output()?;
 
-    let mut sei: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
-    sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    sei.lpFile = wide.as_ptr();
-    sei.nShow = SW_HIDE;
-
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            OsStr::new("open").encode_wide().chain(Some(0)).collect::<Vec<u16>>().as_ptr(),
-            wide.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_HIDE,
-        )
-    };
-
-    if result as usize > 32 {
-        println!("Font installed: {}", path);
+    if output.status.success() {
+        println!("Font installed successfully: {}", font_path.display());
         Ok(())
     } else {
-        Err("Failed to install font".into())
+        let error_message = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Failed to install font: {}", error_message).into())
     }
 }
 
